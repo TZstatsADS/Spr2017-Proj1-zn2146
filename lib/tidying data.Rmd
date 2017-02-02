@@ -1,0 +1,106 @@
+---
+title: "tidying data"
+author: "Zijun Nie ; zn2146"
+date: "January 27, 2017"
+output: html_document
+---
+
+---
+title: "tidying tdm"
+author: "Zijun Nie ; zn2146"
+date: "January 25, 2017"
+output: html_document
+---
+
+```{r load libraries, message=FALSE, include=FALSE}
+# Load libraries:
+library(tm)
+library(wordcloud)
+library(RColorBrewer)
+library(dplyr)
+library(tidytext)
+library(methods)
+library(ggplot2)
+library(tidyr)
+library(plyr)
+library(xlsx)
+```
+
+```{r load data}
+# Load data:
+#dates <- read.table("InauguationDates.txt", header = T, sep = "\t")
+#info <- read.xlsx("InaugurationInfo.xlsx", sheetIndex = 1)
+info <- read.xlsx("../data/InaugurationInfo.xlsx", sheetIndex = 1)
+folder.path="../data/InauguralSpeeches/"
+speeches=list.files(path = folder.path, pattern = "*.txt")
+prez.out=substr(speeches, 6, nchar(speeches)-4)
+
+length.speeches=rep(NA, length(speeches))
+ff.all<-Corpus(DirSource(folder.path))
+
+
+ff.all<-tm_map(ff.all, stripWhitespace)
+ff.all<-tm_map(ff.all, content_transformer(tolower))
+ff.all<-tm_map(ff.all, removeWords, stopwords("english"))
+ff.all<-tm_map(ff.all, removeWords, character(0))
+ff.all<-tm_map(ff.all, removePunctuation)
+tdm.all<-TermDocumentMatrix(ff.all)
+# turning each of the documents into a one-token-per-document-per-row table:
+tdm.tidy <- tidy(tdm.all)
+tdm.overall <- summarise(group_by(tdm.tidy, term), sum(count))
+dtm <- DocumentTermMatrix(ff.all,
+                          control = list(weighting = function(x)
+                                             weightTfIdf(x, 
+                                                         normalize =FALSE),
+                                         stopwords = TRUE))
+ff.dtm=tidy(dtm)
+# calculating the tf-idf of each term-speech pair:
+inaug_tf_idf <- tdm.tidy %>%
+  bind_tf_idf(term, document, count) %>%
+  arrange(desc(tf_idf))
+inaug_tf_idf %>%
+  arrange(desc(tf_idf))
+```
+
+
+
+
+
+```{r, warning=FALSE}
+
+calculate_year <- function(df){
+        year <- c()
+        for(i in 1:nrow(info)){
+        if(info$File[i] == substr(unique(df$document), 6, nchar(df$document)-6))
+                year <- 1785+ i*4
+        df$year <- year
+        }
+        return(df)
+}
+test_year <- ddply(inaug_tf_idf, .(document),calculate_year)
+
+calculate_total <- function(df){
+        year_total <- sum(df$count)
+        df$year_total <- year_total
+        return(df)
+}
+year_term_counts <- ddply(test_year,.(year),calculate_total)
+
+
+
+#tiff(filename = "test1.tif",width = 15,height = 18,units ="cm",compression="lzw",bg="white",res=600)
+
+year_term_counts %>%
+  filter(term %in% c("law", "work", "immigration", "trade", "economy", "constitution")) %>%
+  ggplot(aes(year, count / year_total)) +
+  geom_point() +
+  geom_smooth() +
+  facet_wrap(~ term, ncol = 2,scales = "free_y") +
+  scale_y_continuous(labels = scales::percent_format()) +
+  ylab("% frequency of word in inaugural address")
+
+#dev.off()
+
+```
+
+

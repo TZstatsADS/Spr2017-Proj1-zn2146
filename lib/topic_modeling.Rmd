@@ -1,0 +1,231 @@
+---
+title: "topic_modeling"
+author: "Zijun Nie ; zn2146"
+date: "January 31, 2017"
+output: html_document
+---
+
+```{r, message=FALSE, warning=FALSE, include= FALSE}
+source("../lib/library.R")
+source("../lib/text-prep.R")
+```
+
+
+```{r}
+folder.path="../data/InauguralSpeeches/"
+speeches=list.files(path = folder.path, pattern = "*.txt")
+prez.out=substr(speeches, 6, nchar(speeches)-4)
+
+length.speeches=rep(NA, length(speeches))
+ff.all<-Corpus(DirSource(folder.path))
+
+
+ff.all<-tm_map(ff.all, stripWhitespace)
+ff.all<-tm_map(ff.all, content_transformer(tolower))
+ff.all<-tm_map(ff.all, removeWords, stopwords("english"))
+ff.all<-tm_map(ff.all, removeWords, character(0))
+ff.all<-tm_map(ff.all, removePunctuation)
+myStopwords <- c("will", "can", "shall", "may", "upon", "on", "say", "one", "way", "also", "much", "need", "take", "even", "like", "great", "get", "will", "make", "day", "new", "attempt", "achieve", "never", "lot", "put", "set", "good", "look", "now", "help", "first", "though", "far", "sure", "ever", "enough", "last", "little", "lack", "seen", "etc", "sure", "well", "however", "would", "could", "must", "let", "may", "might", "just", "want", "know", "every", "right", "government", "people", "country", "world", "nation", "states", "united", "nations", "america", "time", "less", "more", "make", "made", "present", "today", "together", "with", "without", "year", "years", "national", "men", "within")
+ff.all<-tm_map(ff.all, removeWords, myStopwords)
+
+tdm.all<-TermDocumentMatrix(ff.all)
+tdm.tidy=tidy(tdm.all)
+tdm.overall=summarise(group_by(tdm.tidy, term), sum(count))
+
+dtm <- DocumentTermMatrix(ff.all)
+ff.dtm=tidy(dtm)
+dtm_lda <- LDA(dtm, k = 6, control = list(seed = 1234))
+dtm_lda
+dtm_lda_td <- tidy(dtm_lda)
+dtm_top_terms <- dtm_lda_td %>%
+  group_by(topic) %>%
+  top_n(12, beta) %>%
+  ungroup() %>%
+  arrange(topic, -beta)
+
+dtm_top_terms %>%
+  mutate(term = reorder(term, beta)) %>%
+  ggplot(aes(term, beta, fill = factor(topic))) +
+  geom_bar(stat = "identity", show.legend = FALSE) +
+  facet_wrap(~ topic, ncol = 3, scales = "free") +
+  coord_flip()
+
+dtm_lda.topics <- as.matrix(topics(dtm_lda))
+write.csv(dtm_lda.topics,file=paste("LDA",6,"DocsToTopics.csv"))
+
+dtm_lda.terms <- as.matrix(terms(dtm_lda,12))
+write.csv(dtm_lda.terms,file=paste("LDA",6,"TopicsToTerms.csv"))
+
+topicProbabilities <- as.data.frame(dtm_lda@gamma)
+write.csv(topicProbabilities,file=paste("LDA",6,"TopicProbabilities.csv"))
+
+topic1ToTopic2 <- lapply(1:nrow(dtm),function(x)
+sort(topicProbabilities[x,])[6]/sort(topicProbabilities[x,])[6-1])
+write.csv(topic1ToTopic2,file=paste("LDA",6,"Topic1ToTopic2.csv"))
+topic1ToTopic2 <- sort(unlist(topic1ToTopic2))
+
+dtm_lda_td
+
+beta_spread <- dtm_lda_td %>%
+  mutate(topic = paste0("topic", topic)) %>%
+  spread(topic, beta)
+```
+
+
+
+```{r}
+corpus.list=sentence.list[2:(nrow(sentence.list)-1), ]
+sentence.pre=sentence.list$sentences[1:(nrow(sentence.list)-2)]
+sentence.post=sentence.list$sentences[3:(nrow(sentence.list)-1)]
+corpus.list$snipets=paste(sentence.pre, corpus.list$sentences, sentence.post, sep=" ")
+rm.rows=(1:nrow(corpus.list))[corpus.list$sent.id==1]
+rm.rows=c(rm.rows, rm.rows-1)
+corpus.list=corpus.list[-rm.rows, ]
+```
+
+## Text mining
+```{r}
+docs <- Corpus(VectorSource(corpus.list$snipets))
+#writeLines(as.character(docs[[sample(1:nrow(corpus.list), 1)]]))
+```
+
+
+Text basic processing
+Adapted from <https://eight2late.wordpress.com/2015/09/29/a-gentle-introduction-to-topic-modeling-using-r/>.
+
+```{r}
+#remove potentially problematic symbols
+docs <-tm_map(docs,content_transformer(tolower))
+writeLines(as.character(docs[[sample(1:nrow(corpus.list), 1)]]))
+
+#remove punctuation
+docs <- tm_map(docs, removePunctuation)
+writeLines(as.character(docs[[sample(1:nrow(corpus.list), 1)]]))
+
+#Strip digits
+docs <- tm_map(docs, removeNumbers)
+writeLines(as.character(docs[[sample(1:nrow(corpus.list), 1)]]))
+
+#remove stopwords
+docs <- tm_map(docs, removeWords, stopwords("english"))
+writeLines(as.character(docs[[sample(1:nrow(corpus.list), 1)]]))
+myStopwords <- c("will", "can", "shall", "may", "upon", "on", "say", "one", "way", "also", "much", "need", "take", "even", "like", "great", "get", "will", "make", "day", "new", "attempt", "achieve", "never", "lot", "put", "set", "good", "look", "now", "help", "first", "though", "far", "sure", "ever", "enough", "last", "little", "lack", "seen", "etc", "sure", "well", "however", "would", "could", "must", "let", "may", "might", "just", "want", "know", "every", "right", "government", "people", "country", "world", "nation", "states", "united", "nations", "america", "time", "less", "more", "make", "made", "present", "today", "together", "with", "without", "year", "years", "national", "men", "within")
+docs <-tm_map(docs, removeWords, myStopwords)
+
+
+#remove whitespace
+docs <- tm_map(docs, stripWhitespace)
+writeLines(as.character(docs[[sample(1:nrow(corpus.list), 1)]]))
+
+#Stem document
+docs <- tm_map(docs,stemDocument)
+writeLines(as.character(docs[[sample(1:nrow(corpus.list), 1)]]))
+```
+
+Topic modeling
+
+Gengerate document-term matrices. 
+
+```{r}
+dtm <- DocumentTermMatrix(docs)
+#convert rownames to filenames#convert rownames to filenames
+rownames(dtm) <- paste(corpus.list$type, corpus.list$File,
+                       corpus.list$Term, corpus.list$sent.id, sep="_")
+
+rowTotals <- apply(dtm , 1, sum) #Find the sum of words in each Document
+
+dtm  <- dtm[rowTotals> 0, ]
+corpus.list=corpus.list[rowTotals>0, ]
+
+```
+
+run LDA
+
+```{r}
+k <- 6
+dtm_lda <- LDA(dtm, k, control = list(seed = 1234))
+dtm_lda
+
+#write out results
+#docs to topics
+dtm_lda.topics <- as.matrix(topics(dtm_lda))
+table(c(1:k, dtm_lda.topics))
+#write.csv(ldaOut.topics,file=paste("../out/LDAGibbs",k,"DocsToTopics.csv"))
+
+#top 6 terms in each topic
+dtm_lda.terms <- as.matrix(terms(dtm_lda,20))
+#write.csv(ldaOut.terms,file=paste("../out/LDAGibbs",k,"TopicsToTerms.csv"))
+
+#probabilities associated with each topic assignment
+topicProbabilities <- as.data.frame(dtm_lda@gamma)
+#write.csv(topicProbabilities,file=paste("../out/LDAGibbs",k,"TopicProbabilities.csv"))
+
+dtm_lda_td <- tidy(dtm_lda)
+dtm_top_terms <- dtm_lda_td %>%
+  group_by(topic) %>%
+  top_n(12, beta) %>%
+  ungroup() %>%
+  arrange(topic, -beta)
+
+dtm_top_terms %>%
+  mutate(term = reorder(term, beta)) %>%
+  ggplot(aes(term, beta, fill = factor(topic))) +
+  geom_bar(stat = "identity", show.legend = FALSE) +
+  facet_wrap(~ topic, ncol = 3, scales = "free") +
+  coord_flip()
+```
+
+
+```{r}
+terms.beta=dtm_lda@beta
+terms.beta=scale(terms.beta)
+topics.terms=NULL
+for(i in 1:k){
+  topics.terms=rbind(topics.terms, dtm_lda@terms[order(terms.beta[i,], decreasing = TRUE)[1:6]])
+}
+topics.terms
+dtm_lda.terms
+```
+
+```{r}
+topics.hash=c("Legislation", "HomelandSecurity", "Election", "America", "Reform", "Work")
+corpus.list$ldatopic=as.vector(dtm_lda.topics)
+corpus.list$ldahash=topics.hash[dtm_lda.topics]
+
+colnames(topicProbabilities)=topics.hash
+corpus.list.df=cbind(corpus.list, topicProbabilities)
+```
+
+
+
+
+```{r}
+speech.df=tbl_df(corpus.list.df)%>%filter(type=="nomin", word.count<20)%>%select(sentences, Legislation:Work)
+
+as.character(speech.df$sentences[apply(as.data.frame(speech.df[,-1]), 2, which.max)])
+
+names(speech.df)[-1]
+
+```
+
+
+```{r}
+presid.summary=tbl_df(corpus.list.df)%>%
+  filter(type=="inaug", File%in%sel.comparison)%>%
+  select(File, Legislation:Work)%>%
+  group_by(File)%>%
+  summarise_each(funs(mean))
+
+presid.summary=as.data.frame(presid.summary)
+rownames(presid.summary)=as.character((presid.summary[,1]))
+km.res=kmeans(scale(presid.summary[,-1]), iter.max=200,
+              5)
+fviz_cluster(km.res, 
+             stand=T, repel= TRUE,
+             data = presid.summary[,-1],
+             show.clust.cent=FALSE)
+```
+
+
+
+

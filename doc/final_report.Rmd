@@ -1,0 +1,491 @@
+---
+title: "Text Mining on Presidential Speeches"
+author: "Zijun Nie ; zn2146"
+date: "January 31, 2017"
+output:
+  html_document: default
+  html_notebook: default
+---
+
+```{r, message=FALSE, warning=FALSE, include= FALSE}
+source("../lib/library.R")
+source("../lib/text-prep.R")
+source("../lib/speechFuncs.R")
+```
+
+
+**Here I conduct a short story of different speeches of different U.S. presidents and nominees based on the data scraped from <http://www.presidency.ucsb.edu/>. For this project, speeches includes all inaugural addresses of past presidents, nomination speeches of major party candidates, farewell addresses and several public speeches from Donald Trump. The following textual analysises will be based on these speeches and I will have a especial focus on speeches of the current president Donald Trump.**
+
+## Part1 Topic Modeling
+
+Let's firstly have a preview of what topics may be included in speeches concerning politics and presidential election. Let's assume there are 6 topics in the speeches. Then we run LDA over our data and visualize the top-12-most-frequent words in each topic:
+
+```{r,include=FALSE}
+corpus.list=sentence.list[2:(nrow(sentence.list)-1), ]
+sentence.pre=sentence.list$sentences[1:(nrow(sentence.list)-2)]
+sentence.post=sentence.list$sentences[3:(nrow(sentence.list)-1)]
+corpus.list$snipets=paste(sentence.pre, corpus.list$sentences, sentence.post, sep=" ")
+rm.rows=(1:nrow(corpus.list))[corpus.list$sent.id==1]
+rm.rows=c(rm.rows, rm.rows-1)
+corpus.list=corpus.list[-rm.rows, ]
+
+docs <- Corpus(VectorSource(corpus.list$snipets))
+
+#remove potentially problematic symbols
+docs <-tm_map(docs,content_transformer(tolower))
+#remove punctuation
+docs <- tm_map(docs, removePunctuation)
+#Strip digits
+docs <- tm_map(docs, removeNumbers)
+#remove stopwords
+docs <- tm_map(docs, removeWords, stopwords("english"))
+myStopwords <- c("will", "can", "shall", "may", "upon", "on", "say", "one", "way", "also", "much", "need", "take", "even", "like", "great", "get", "will", "make", "day", "new", "attempt", "achieve", "never", "lot", "put", "set", "good", "look", "now", "help", "first", "though", "far", "sure", "ever", "enough", "last", "little", "lack", "seen", "etc", "sure", "well", "however", "would", "could", "must", "let", "may", "might", "just", "want", "know", "every", "right", "government", "people", "country", "world", "nation", "states", "united", "nations", "america", "time", "less", "more", "make", "made", "present", "today", "together", "with", "without", "year", "years", "national", "men", "within", "still")
+docs <-tm_map(docs, removeWords, myStopwords)
+
+#remove whitespace
+docs <- tm_map(docs, stripWhitespace)
+
+#Stem document
+docs <- tm_map(docs,stemDocument)
+dtm <- DocumentTermMatrix(docs)
+#convert rownames to filenames#convert rownames to filenames
+rownames(dtm) <- paste(corpus.list$type, corpus.list$File,
+                       corpus.list$Term, corpus.list$sent.id, sep="_")
+
+rowTotals <- apply(dtm , 1, sum) #Find the sum of words in each Document
+
+dtm  <- dtm[rowTotals> 0, ]
+corpus.list=corpus.list[rowTotals>0, ]
+```
+
+
+
+```{r,echo=FALSE, fig.align='center'}
+k <- 6
+dtm_lda <- LDA(dtm, k, control = list(seed = 1234))
+
+#write out results
+#docs to topics
+dtm_lda.topics <- as.matrix(topics(dtm_lda))
+#table(c(1:k, dtm_lda.topics))
+#write.csv(ldaOut.topics,file=paste("../out/LDAGibbs",k,"DocsToTopics.csv"))
+
+#top 6 terms in each topic
+dtm_lda.terms <- as.matrix(terms(dtm_lda,20))
+#write.csv(ldaOut.terms,file=paste("../out/LDAGibbs",k,"TopicsToTerms.csv"))
+
+#probabilities associated with each topic assignment
+topicProbabilities <- as.data.frame(dtm_lda@gamma)
+#write.csv(topicProbabilities,file=paste("../out/LDAGibbs",k,"TopicProbabilities.csv"))
+
+dtm_lda_td <- tidy(dtm_lda)
+
+dtm_top_terms <- dtm_lda_td %>%
+  group_by(topic) %>%
+  top_n(12, beta) %>%
+  ungroup() %>%
+  arrange(topic, -beta)
+
+dtm_top_terms %>%
+  mutate(term = reorder(term, beta)) %>%
+  ggplot(aes(term, beta, fill = factor(topic))) +
+  geom_bar(stat = "identity", show.legend = FALSE) +
+  facet_wrap(~ topic, ncol = 3, scales = "free") +
+  coord_flip()
+```
+
+From the above graph, we can surely see some patterns. For instance, some words occur frequently in every topic, like "american", "work", "freedom" etc., which makes sense because a political speech is all about contents like them. On the other hand, we can see some diversities among topics. Like, topic1 focuses more on "law" while topic2 pays more attention on "peace and security". So I manually set topic names to each of the topic: "Legislation", "HomelandSecurity", "Election", "America", "Reform" and "Work".
+
+Based on the divided topics, we can clearly find some hit words in political speeches. So now we want to find out how the frequencies of some of hit words change over time.
+
+```{r echo=FALSE, warning=FALSE, fig.align='center', message= FALSE}
+library("plyr")
+# Load data:
+#dates <- read.table("InauguationDates.txt", header = T, sep = "\t")
+#info <- read.xlsx("InaugurationInfo.xlsx", sheetIndex = 1)
+info <- read.xlsx("../data/InaugurationInfo.xlsx", sheetIndex = 1)
+folder.path="../data/InauguralSpeeches/"
+speeches=list.files(path = folder.path, pattern = "*.txt")
+prez.out=substr(speeches, 6, nchar(speeches)-4)
+
+length.speeches=rep(NA, length(speeches))
+ff.all<-Corpus(DirSource(folder.path))
+
+
+ff.all<-tm_map(ff.all, stripWhitespace)
+ff.all<-tm_map(ff.all, content_transformer(tolower))
+ff.all<-tm_map(ff.all, removeWords, stopwords("english"))
+ff.all<-tm_map(ff.all, removeWords, character(0))
+ff.all<-tm_map(ff.all, removePunctuation)
+tdm.all<-TermDocumentMatrix(ff.all)
+# turning each of the documents into a one-token-per-document-per-row table:
+tdm.tidy <- tidy(tdm.all)
+tdm.overall <- summarise(group_by(tdm.tidy, term), sum(count))
+dtm <- DocumentTermMatrix(ff.all,
+                          control = list(weighting = function(x)
+                                             weightTfIdf(x, 
+                                                         normalize =FALSE),
+                                         stopwords = TRUE))
+ff.dtm=tidy(dtm)
+# calculating the tf-idf of each term-speech pair:
+inaug_tf_idf <- tdm.tidy %>%
+  bind_tf_idf(term, document, count) %>%
+  arrange(desc(tf_idf))
+#inaug_tf_idf %>%
+ # arrange(desc(tf_idf))
+test_year <- ddply(inaug_tf_idf, .(document),calculate_year)
+year_term_counts <- ddply(test_year,.(year),calculate_total)
+
+#tiff(filename = "test1.tif",width = 15,height = 18,units ="cm",compression="lzw",bg="white",res=600)
+
+year_term_counts %>%
+  filter(term %in% c("law", "work", "immigration", "trade", "economy", "constitution")) %>%
+  ggplot(aes(year, count / year_total)) +
+  geom_point() +
+  geom_smooth() +
+  facet_wrap(~ term, ncol = 2,scales = "free_y") +
+  scale_y_continuous(labels = scales::percent_format()) +
+  ylab("% frequency of word in inaugural address")
+
+#dev.off()
+
+```
+
+As we can see, they display different patterns although they are all hit topics. For example, the frequencies of "law" and "consititution" seems to be lower than before, which makes sense because laws are more complete than before. "immigration" and "work" occur more often now which also fits the trend. While "economy" and "trade" occur steadily during the course of development.
+
+```{r,echo=FALSE}
+terms.beta=dtm_lda@beta
+terms.beta=scale(terms.beta)
+topics.terms=NULL
+for(i in 1:k){
+  topics.terms=rbind(topics.terms, dtm_lda@terms[order(terms.beta[i,], decreasing = TRUE)[1:6]])
+}
+
+topics.hash=c("Legislation", "HomelandSecurity", "Election", "America", "Reform", "Work")
+corpus.list$ldatopic=as.vector(dtm_lda.topics)
+corpus.list$ldahash=topics.hash[dtm_lda.topics]
+
+colnames(topicProbabilities)=topics.hash
+corpus.list.df=cbind(corpus.list, topicProbabilities)
+```
+
+
+analysis ## explanation followed by online book frequency prob etc..
+
+```{r,echo=FALSE}
+speech.df=tbl_df(corpus.list.df)%>%filter(type=="nomin", word.count<15)%>%select(sentences, Legislation:Work)
+
+as.character(speech.df$sentences[apply(as.data.frame(speech.df[,-1]), 2, which.max)])
+
+names(speech.df)[-1]
+```
+
+Also, we can cluster different inauguration speeches in terms of their topic:
+
+```{r,echo=FALSE, fig.align='center'}
+presid.summary=tbl_df(corpus.list.df)%>%
+  filter(type=="inaug", File%in%sel.comparison)%>%
+  select(File, Legislation:Work)%>%
+  group_by(File)%>%
+  summarise_each(funs(mean))
+
+presid.summary=as.data.frame(presid.summary)
+rownames(presid.summary)=as.character((presid.summary[,1]))
+km.res=kmeans(scale(presid.summary[,-1]), iter.max=200,
+              4)
+fviz_cluster(km.res, 
+             stand=T, repel= TRUE,
+             data = presid.summary[,-1],
+             show.clust.cent=FALSE)
+```
+
+From the figure, we can see that topics of inauguration speeches do have great diversity in terms of different presidents. For example, Donald Trump and John adams, which come from different clusters with far distance. It makes sense because back when John was president, he talked more about the independence of America. But now, topics concerning how to develop the country are mostly mentioned.
+
+## Part2 Analyzing Words
+
+Now let's do some analysis on the number of words in one sentence. First, let's focus on all the inauguration speeches in each of different parties:
+
+```{r,echo=FALSE, fig.align='center'}
+sentence.list.sel=filter(sentence.list, 
+                        type == "inaug")
+sentence.list.sel$Party=factor(sentence.list.sel$Party)
+
+sentence.list.sel$PartyOrdered=reorder(sentence.list.sel$Party, 
+                                  sentence.list.sel$word.count, 
+                                  mean, 
+                                  order=T)
+
+beeswarm(word.count~PartyOrdered, 
+         data=sentence.list.sel,
+         horizontal = TRUE, 
+         pch=16, col=alpha(brewer.pal(9, "Set1"), 0.6), 
+         cex=0.55, cex.axis=0.8, cex.lab=0.8,
+         spacing=0.2/nlevels(sentence.list.sel$PartyOrdered),
+         las=2, xlab="Number of words in a sentence.", ylab="",
+         main="Different parties")
+#sentence.list%>%
+ # filter(Party=="Republican", 
+  #       type=="inaug", 
+   #      word.count<=3)%>%
+  #select(sentences)%>%sample_n(6)
+```
+
+The message is clear that for "Fedralist", "Whig", "Democratic-Republican Party", there are basically no preferences on using short or long sentences. However, for "Democratic" and "Republican", they seem to prefer using more short words per sentence.
+Take Donald Trump for instance, the patterns in his different speeches are especially obvious:
+
+```{r,echo=FALSE,fig.align='center'}
+sentence.list.sel=filter(sentence.list, 
+                        File == "DonaldJTrump")
+sentence.list.sel$type=factor(sentence.list.sel$type)
+
+sentence.list.sel$typeOrdered=reorder(sentence.list.sel$type, 
+                                  sentence.list.sel$word.count, 
+                                  mean, 
+                                  order=T)
+
+beeswarm(word.count~typeOrdered, 
+         data=sentence.list.sel,
+         horizontal = TRUE, 
+         pch=16, col=alpha(brewer.pal(9, "Set1"), 0.6), 
+         cex=0.55, cex.axis=0.8, cex.lab=0.8,
+         spacing=0.5/nlevels(sentence.list.sel$typeOrdered),
+         las=2, xlab="Number of words in a sentence.", ylab="",
+         main="Different speeches of DonaldJTrump")
+```
+
+We can see that his inauguration speeches seem normal, while his nominee speeches get to show some tend to use short words. What's more, his public speeches show a apparent preference on using short words. And the length of each of the three types of speeches seems to increase, which may suggest he might sort of control himself at more formal venues. And let's take a look at what exactly short sentences he said at different types of speeches.
+
+nominee speeches:
+```{r,echo=FALSE}
+sentence.list%>%
+  filter(File=="DonaldJTrump", 
+         type=="nomin", 
+         word.count<=3)%>%
+  select(sentences)%>%sample_n(5)
+```
+
+inauguration speeches:
+```{r,echo=FALSE}
+sentence.list%>%
+  filter(File=="DonaldJTrump", 
+         type=="inaug", 
+         word.count<=3)%>%
+  select(sentences)%>%sample_n(5)
+```
+public speeches:
+```{r,echo=FALSE}
+sentence.list%>%
+  filter(File=="DonaldJTrump", 
+         type=="speeches", 
+         word.count<=5)%>%
+  select(sentences)%>%sample_n(5)
+```
+
+We can see that, at nominee and inauguration speeches, the short sentences do not convey much real information, like "thank you". While in public speeches, short sentences do mean something. It may express his emotion, comments etc.
+
+
+**Based on the above analysis, since short words are some kind of hit in speeches. Now let's take an especial look on the present president Donald Trump and focus on the frequency of word gruops (bigram). Because unlike single word, this may actually mean something like some specific topics.** 
+
+First, let's visualize what bigrams he said frequently in his different speeches:
+
+```{r,echo=FALSE, warning=FALSE}
+trump_bigrams <- speech.list[speech.list$File == "DonaldJTrump",] %>%
+  unnest_tokens(bigram, fulltext, token = "ngrams", n = 2)
+
+bigrams_separated <- trump_bigrams %>%
+  separate(bigram, c("word1", "word2"), sep = " ")
+
+bigrams_filtered <- bigrams_separated %>%
+  filter(!word1 %in% stop_words$word) %>%
+  filter(!word2 %in% stop_words$word)
+
+bigram_counts <- bigrams_filtered %>% 
+  dplyr::count(word1, word2, sort = TRUE)
+
+bigrams_united <- bigrams_filtered %>%
+  unite(bigram, word1, word2, sep = " ") 
+
+bigrams_united <- bigrams_united %>%
+  dplyr::count(type, bigram) %>%
+  arrange(desc(n)) 
+
+bigrams_united <- bigrams_united %>% 
+  mutate(bigram = factor(bigram, levels = rev(unique(bigram)))) %>%
+  group_by(type) %>% 
+  arrange(desc(n))%>%
+  top_n(5) %>% 
+  ungroup
+
+
+ggplot(bigrams_united, aes(bigram, n, fill = type)) +
+  geom_bar(stat = "identity", show.legend = FALSE) +
+  labs(x = NULL, y = "count of words") +
+  facet_wrap(~type, ncol = 2, scales = "free") +
+  coord_flip()
+```
+
+Through visualizing that, analyzing bigram is helpful for exploratory analyses of the text. For example, if we want to know what word is ahead of "american" most:
+
+```{r,echo=FALSE}
+bigrams_filtered %>%
+  filter(word2 == "american") %>%
+  dplyr::count(type, word1, sort = TRUE)
+```
+We can see it's Africa American, which is exactly one of his focus in the speeches.
+
+Or, if we are wondering what kinks of policy he mentioned most:
+```{r,echo=FALSE}
+bigrams_filtered %>%
+  filter(word2 == "policy") %>%
+  dplyr::count(type, word1, sort = TRUE)
+head(bigrams_filtered,5)
+```
+The results also fit the real trend, which are immigration and foreign policies.
+
+One step further, if we want to know what is his attitude or how he describe immigration, we can check the words that are ahead of "immigration":
+```{r,echo=FALSE}
+bigrams_filtered %>%
+  filter(word2 == "immigration") %>%
+  dplyr::count(type, word1, sort = TRUE)
+head(bigrams_filtered,5)
+```
+
+The reuslts have no surprise, because he has an extreme attitude about immigration. So no wonder he always emphasized "illegal" when talking about it.
+
+## Part3 Sentiment Analysis
+
+Finally, we will implement sentiment analysis on the inauguration speeches and also have an especial look at Donald Trumps emotioms in his different speeches.
+
+I will use "NRC" lexicon to do sentiment analysis. To do that, I quantify the positivity and negtivity of each word by calculating a score for each of them. The following figure shows the positivity of all the inauguration speeches:
+
+```{r,fig.width = 5, fig.height = 6, echo= FALSE, warning= FALSE, fig.align='center'}
+
+inaug_speech.list <- speech.list %>%
+        filter(type == "inaug")
+docs <- Corpus(VectorSource(inaug_speech.list$fulltext))
+docs <-tm_map(docs,content_transformer(tolower))
+#remove punctuation
+docs <- tm_map(docs, removePunctuation)
+#Strip digits
+docs <- tm_map(docs, removeNumbers)
+#remove stopwords
+docs <- tm_map(docs, removeWords, stopwords("english"))
+
+#remove whitespace
+docs <- tm_map(docs, stripWhitespace)
+
+#Stem document
+docs <- tm_map(docs,stemDocument)
+dtm <- DocumentTermMatrix(docs)
+rownames(dtm) <- paste("inaug", inaug_speech.list$File,
+                       inaug_speech.list$Term, sep="_")
+
+dtm_td <- tidy(dtm)
+
+dtm_sentiment_count <- dtm_td %>%
+        mutate(word = term) %>%
+  inner_join(get_sentiments("nrc"), by = "word") %>%
+  dplyr::count(sentiment, document) %>%
+  spread(sentiment, n, fill = 0)
+
+
+dtm_sentiment_count %>%
+  mutate(score = (positive - negative) / (positive + negative)) %>%
+  mutate(document = reorder(document, score)) %>%
+  ggplot(aes(document, score, fill = score > 0)) +
+  geom_col(show.legend = FALSE) +
+  coord_flip() +
+  labs(x = "Document",
+       y = "Positivity score among inaug speeches")
+```
+
+From the figure, we can visualize that Zachary Tylor has the highest value of positivity, which may suggest that he was a good speecher and had a great way to persuade people. On the other hand, Warren Harding seems to have the lowest value of positivity. Anyway, the bright side is that none of the past presidents ends up with a negative value, which implies that inauguration speeches are some sort of good way to convey postive attitute and to provide hope and faith.
+
+Now let's look at the different speeches of Donald Trump. We also visaulize score of speeches in terms of types.
+```{r,echo=FALSE,fig.align='center'}
+trump_speech.list <- speech.list %>%
+        filter(File == "DonaldJTrump")
+docs <- Corpus(VectorSource(trump_speech.list$fulltext))
+docs <-tm_map(docs,content_transformer(tolower))
+#remove punctuation
+docs <- tm_map(docs, removePunctuation)
+#Strip digits
+docs <- tm_map(docs, removeNumbers)
+#remove stopwords
+docs <- tm_map(docs, removeWords, stopwords("english"))
+
+#remove whitespace
+docs <- tm_map(docs, stripWhitespace)
+
+#Stem document
+docs <- tm_map(docs,stemDocument)
+dtm <- DocumentTermMatrix(docs)
+rownames(dtm) <- paste(trump_speech.list$type, trump_speech.list$File,
+                        sep="_")
+dtm_td <- tidy(dtm)
+
+dtm_sentiment_count <- dtm_td %>%
+        mutate(word = term) %>%
+  inner_join(get_sentiments("nrc"), by = "word") %>%
+  dplyr::count(sentiment, document) %>%
+  spread(sentiment, n, fill = 0)
+
+
+dtm_sentiment_count %>%
+  mutate(score = (positive - negative) / (positive + negative)) %>%
+  mutate(document = reorder(document, score)) %>%
+  ggplot(aes(document, score, fill = score > 0)) +
+  geom_col(show.legend = FALSE, width = 0.2) +
+  coord_flip() +
+  labs(x = "Document",
+       y = "Positivity score among DonaldTrump's speeches")
+```
+
+The patterns in the graph are obvious. We can see that Donald Trump has the highest score value in his inauguration speeches. While in nominee and public speeches, the scores are much lower, which may suggest that he is a "outright" guy who would not control his word even in public.
+
+**sentiment by sentence**
+
+Now we go one step further to analyze his speeches. This time we will analyze his sentiments by sentence. We will calculte the score of each sentence. Also, we will see what exactly are the most positive (negative) sentences he said. And we will compare them with those occur in another nominee's speeches, Hillary Clinton.
+
+Donald Trump's most positive sentences:
+```{r,echo=FALSE}
+result_pos <- sentence.list %>%
+          mutate(score = (positive - negative) / (positive + negative)) %>%
+          filter(File == "DonaldJTrump", type == "inaug", score == 1, sentences != "")
+head(result_pos$sentences,5)
+```
+
+Donald Trump's most negtive sentences:
+```{r,echo=FALSE}
+result_nag <- sentence.list %>%
+          mutate(score = (positive - negative) / (positive + negative)) %>%
+          filter(File == "DonaldJTrump", type == "speeches", score == -1, sentences != "")
+result_nag$sentences[2:6]
+```
+
+Hillary Clinton's most positive sentences:
+```{r,echo=FALSE}
+sentiment_messages <- sentence.list %>%
+  filter(type == "inaug", File == "DonaldJTrump") %>%
+  mutate(score = (positive - negative) / (positive + negative)) %>%
+  arrange(desc(score))
+
+result_pos <- sentence.list %>%
+          mutate(score = (positive - negative) / (positive + negative)) %>%
+          filter(File == "HillaryClinton", score == 1, sentences != "")
+head(result_pos$sentences,5)
+```
+
+Hillary Clinton's most negative sentences:
+```{r,echo=FALSE}
+result_nag <- sentence.list %>%
+          mutate(score = (positive - negative) / (positive + negative)) %>%
+          filter(File == "HillaryClinton", type == "nomin", score == -1, sentences != "")
+(result_nag$sentences)[c(7,9,12,17,20)]
+```
+
+From the above analysis, we can see some interesting patterns. Based on some of the most positive and negative sentences, we can see that Donald Trump is an "outright" or even "extreme" nominee. We can see that some of his bad words directly aim at someone or something. He kind of cannot control himself saying them. On the other hand, for another nomiee in this year, Hillary Clinton, even her top negative words are more of like stating some facts rather than explicitly aiming at someone.
+
+
+
+
