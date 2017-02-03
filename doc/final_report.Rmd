@@ -68,15 +68,15 @@ dtm_lda <- LDA(dtm, k, control = list(seed = 1234))
 #docs to topics
 dtm_lda.topics <- as.matrix(topics(dtm_lda))
 #table(c(1:k, dtm_lda.topics))
-#write.csv(ldaOut.topics,file=paste("../out/LDAGibbs",k,"DocsToTopics.csv"))
+#write.csv(dtm_lda.topics,file=paste("../output/LDA",k,"DocsToTopics.csv"))
 
 #top 6 terms in each topic
 dtm_lda.terms <- as.matrix(terms(dtm_lda,20))
-#write.csv(ldaOut.terms,file=paste("../out/LDAGibbs",k,"TopicsToTerms.csv"))
+#write.csv(dtm_lda.terms,file=paste("../output/LDA",k,"TopicsToTerms.csv"))
 
 #probabilities associated with each topic assignment
 topicProbabilities <- as.data.frame(dtm_lda@gamma)
-#write.csv(topicProbabilities,file=paste("../out/LDAGibbs",k,"TopicProbabilities.csv"))
+#write.csv(topicProbabilities,file=paste("../output/LDA",k,"TopicProbabilities.csv"))
 
 dtm_lda_td <- tidy(dtm_lda)
 
@@ -85,13 +85,14 @@ dtm_top_terms <- dtm_lda_td %>%
   top_n(12, beta) %>%
   ungroup() %>%
   arrange(topic, -beta)
-
+#png(paste("../output/LDA", "topic.visual.png"),)
 dtm_top_terms %>%
   mutate(term = reorder(term, beta)) %>%
   ggplot(aes(term, beta, fill = factor(topic))) +
   geom_bar(stat = "identity", show.legend = FALSE) +
   facet_wrap(~ topic, ncol = 3, scales = "free") +
   coord_flip()
+#dev.off()
 ```
 
 From the above graph, we can surely see some patterns. For instance, some words occur frequently in every topic, like "american", "work", "freedom" etc., which makes sense because a political speech is all about contents like them. On the other hand, we can see some diversities among topics. Like, topic1 focuses more on "law" while topic2 pays more attention on "peace and security". So I manually set topic names to each of the topic: "Legislation", "HomelandSecurity", "Election", "America", "Reform" and "Work".
@@ -136,7 +137,7 @@ inaug_tf_idf <- tdm.tidy %>%
 test_year <- ddply(inaug_tf_idf, .(document),calculate_year)
 year_term_counts <- ddply(test_year,.(year),calculate_total)
 
-#tiff(filename = "test1.tif",width = 15,height = 18,units ="cm",compression="lzw",bg="white",res=600)
+#png(paste("../output/LDA", "wordchange.png"))
 
 year_term_counts %>%
   filter(term %in% c("law", "work", "immigration", "trade", "economy", "constitution")) %>%
@@ -169,17 +170,6 @@ colnames(topicProbabilities)=topics.hash
 corpus.list.df=cbind(corpus.list, topicProbabilities)
 ```
 
-
-analysis ## explanation followed by online book frequency prob etc..
-
-```{r,echo=FALSE}
-speech.df=tbl_df(corpus.list.df)%>%filter(type=="nomin", word.count<15)%>%select(sentences, Legislation:Work)
-
-as.character(speech.df$sentences[apply(as.data.frame(speech.df[,-1]), 2, which.max)])
-
-names(speech.df)[-1]
-```
-
 Also, we can cluster different inauguration speeches in terms of their topic:
 
 ```{r,echo=FALSE, fig.align='center'}
@@ -193,13 +183,16 @@ presid.summary=as.data.frame(presid.summary)
 rownames(presid.summary)=as.character((presid.summary[,1]))
 km.res=kmeans(scale(presid.summary[,-1]), iter.max=200,
               4)
+#png(paste("../output/LDA", "cluster.png"))
+
 fviz_cluster(km.res, 
              stand=T, repel= TRUE,
              data = presid.summary[,-1],
              show.clust.cent=FALSE)
+#dev.off()
 ```
 
-From the figure, we can see that topics of inauguration speeches do have great diversity in terms of different presidents. For example, Donald Trump and John adams, which come from different clusters with far distance. It makes sense because back when John was president, he talked more about the independence of America. But now, topics concerning how to develop the country are mostly mentioned.
+From the figure, we can see that topics of inauguration speeches do have great diversity in terms of different presidents. For example, Donald Trump and John adams come from different clusters with far distance. It makes sense because back when John was president, he talked more about the independence of America. But now, topics concerning how to develop the country are mostly mentioned.
 
 ## Part2 Analyzing Words
 
@@ -214,6 +207,7 @@ sentence.list.sel$PartyOrdered=reorder(sentence.list.sel$Party,
                                   sentence.list.sel$word.count, 
                                   mean, 
                                   order=T)
+#png(paste("../output/LDA", "parties.png"))
 
 beeswarm(word.count~PartyOrdered, 
          data=sentence.list.sel,
@@ -223,6 +217,7 @@ beeswarm(word.count~PartyOrdered,
          spacing=0.2/nlevels(sentence.list.sel$PartyOrdered),
          las=2, xlab="Number of words in a sentence.", ylab="",
          main="Different parties")
+#dev.off()
 #sentence.list%>%
  # filter(Party=="Republican", 
   #       type=="inaug", 
@@ -242,6 +237,7 @@ sentence.list.sel$typeOrdered=reorder(sentence.list.sel$type,
                                   sentence.list.sel$word.count, 
                                   mean, 
                                   order=T)
+#png(paste("../output/LDA", "DTsentence.png"))
 
 beeswarm(word.count~typeOrdered, 
          data=sentence.list.sel,
@@ -251,6 +247,7 @@ beeswarm(word.count~typeOrdered,
          spacing=0.5/nlevels(sentence.list.sel$typeOrdered),
          las=2, xlab="Number of words in a sentence.", ylab="",
          main="Different speeches of DonaldJTrump")
+#dev.off()
 ```
 
 We can see that his inauguration speeches seem normal, while his nominee speeches get to show some tend to use short words. What's more, his public speeches show a apparent preference on using short words. And the length of each of the three types of speeches seems to increase, which may suggest he might sort of control himself at more formal venues. And let's take a look at what exactly short sentences he said at different types of speeches.
@@ -316,38 +313,43 @@ bigrams_united <- bigrams_united %>%
   top_n(5) %>% 
   ungroup
 
+#png(paste("../output", "DTbigram.png"))
 
 ggplot(bigrams_united, aes(bigram, n, fill = type)) +
   geom_bar(stat = "identity", show.legend = FALSE) +
   labs(x = NULL, y = "count of words") +
   facet_wrap(~type, ncol = 2, scales = "free") +
   coord_flip()
+#dev.off()
 ```
+
+We can see some patterns here that in addition to some emphasized topics like "illeagal immigration", Trump tends to mention other nominees or past presidents in his speech. Even if mentioning Hillary Clinton in the nominee speeches are understandable, including her in his pubilc speeches and Barack Obama in his inauguration speech may seem like a little bit personal.
 
 Through visualizing that, analyzing bigram is helpful for exploratory analyses of the text. For example, if we want to know what word is ahead of "american" most:
 
 ```{r,echo=FALSE}
-bigrams_filtered %>%
+x <- bigrams_filtered %>%
   filter(word2 == "american") %>%
   dplyr::count(type, word1, sort = TRUE)
+head(x,5)
 ```
 We can see it's Africa American, which is exactly one of his focus in the speeches.
 
 Or, if we are wondering what kinks of policy he mentioned most:
 ```{r,echo=FALSE}
-bigrams_filtered %>%
+x <- bigrams_filtered %>%
   filter(word2 == "policy") %>%
   dplyr::count(type, word1, sort = TRUE)
-head(bigrams_filtered,5)
+head(x,5)
 ```
 The results also fit the real trend, which are immigration and foreign policies.
 
 One step further, if we want to know what is his attitude or how he describe immigration, we can check the words that are ahead of "immigration":
 ```{r,echo=FALSE}
-bigrams_filtered %>%
+x <- bigrams_filtered %>%
   filter(word2 == "immigration") %>%
   dplyr::count(type, word1, sort = TRUE)
-head(bigrams_filtered,5)
+head(x,5)
 ```
 
 The reuslts have no surprise, because he has an extreme attitude about immigration. So no wonder he always emphasized "illegal" when talking about it.
@@ -388,6 +390,7 @@ dtm_sentiment_count <- dtm_td %>%
   dplyr::count(sentiment, document) %>%
   spread(sentiment, n, fill = 0)
 
+#png(paste("../output", "inaug_sent.png"))
 
 dtm_sentiment_count %>%
   mutate(score = (positive - negative) / (positive + negative)) %>%
@@ -397,6 +400,7 @@ dtm_sentiment_count %>%
   coord_flip() +
   labs(x = "Document",
        y = "Positivity score among inaug speeches")
+#dev.off()
 ```
 
 From the figure, we can visualize that Zachary Tylor has the highest value of positivity, which may suggest that he was a good speecher and had a great way to persuade people. On the other hand, Warren Harding seems to have the lowest value of positivity. Anyway, the bright side is that none of the past presidents ends up with a negative value, which implies that inauguration speeches are some sort of good way to convey postive attitute and to provide hope and faith.
@@ -430,15 +434,17 @@ dtm_sentiment_count <- dtm_td %>%
   dplyr::count(sentiment, document) %>%
   spread(sentiment, n, fill = 0)
 
+#png(paste("../output", "DT_sent.png"))
 
 dtm_sentiment_count %>%
   mutate(score = (positive - negative) / (positive + negative)) %>%
   mutate(document = reorder(document, score)) %>%
   ggplot(aes(document, score, fill = score > 0)) +
-  geom_col(show.legend = FALSE, width = 0.2) +
+  geom_col(show.legend = FALSE, width = 0.3) +
   coord_flip() +
   labs(x = "Document",
        y = "Positivity score among DonaldTrump's speeches")
+#dev.off()
 ```
 
 The patterns in the graph are obvious. We can see that Donald Trump has the highest score value in his inauguration speeches. While in nominee and public speeches, the scores are much lower, which may suggest that he is a "outright" guy who would not control his word even in public.
@@ -484,7 +490,7 @@ result_nag <- sentence.list %>%
 (result_nag$sentences)[c(7,9,12,17,20)]
 ```
 
-From the above analysis, we can see some interesting patterns. Based on some of the most positive and negative sentences, we can see that Donald Trump is an "outright" or even "extreme" nominee. We can see that some of his bad words directly aim at someone or something. He kind of cannot control himself saying them. On the other hand, for another nomiee in this year, Hillary Clinton, even her top negative words are more of like stating some facts rather than explicitly aiming at someone.
+From the above sentences, we can see some interesting patterns. Based on some of the most positive and negative sentences, we can see that Donald Trump is an "outright" or even "extreme" nominee. We can see that some of his bad words directly aim at someone or something. He kind of cannot control himself saying them. On the other hand, for another nomiee in this year, Hillary Clinton, even her top negative words are more of like stating some facts rather than explicitly aiming at someone.
 
 
 
